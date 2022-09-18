@@ -1,0 +1,873 @@
+---
+title: "Untitled"
+runtime: shiny
+output: 
+ flexdashboard::flex_dashboard:
+  orientation: columns
+  vertical_layout: scroll
+  source_code: embed
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(shinyjs)
+library(shinyjs)
+library(lobstr)
+library(htmltools)
+library(readr)
+library(magrittr)
+library(DT)
+library(ggplot2)
+library(plotly)
+library(quantmod)
+library(forecast)
+library(tseries)
+library(fGarch)
+library(rugarch)
+```
+
+# PAGE1 {data-icon="fa-table"}
+
+## Column_1 {.sidebar}
+
+```{r}
+useShinyjs(rmd = TRUE)
+
+fileInput(inputId="Upload_1", label="Choose the file", multiple = FALSE, accept = ".csv")
+
+textInput(inputId="Upload_2", label="Symbol", value="")
+dateRangeInput("Dates_set", label = h3("Date range"), start = Sys.Date()-800, end = Sys.Date())
+
+actionButton("reset", label = "Reset", width="80px")
+actionButton("submit", label = "Submit", class="btn btn-primary")
+```
+
+
+```{r}
+observeEvent(input$submit11,{
+  shinyjs::reset("Dates_plot")
+  value$Date_min<-NULL
+  value$Date_max<-NULL
+})
+```
+
+
+
+```{r}
+#evaluation featres of isTruthy() - https://cran.r-project.org/web/packages/shiny/shiny.pdf
+observeEvent(input$submit,{
+  
+  if (fileCheck() && input$Upload_2=="") {
+    
+      Import1<-read_csv(input$Upload_1$datapath)
+    if(ncol(Import1)==1){
+      Import1<-read_csv2(input$Upload_1$datapath)
+    }
+      value$data<-as.data.frame(Import1)
+  }
+  else if (isFALSE(fileCheck()) && isTruthy(input$Upload_2)==TRUE){
+    
+    tryCatch({
+      if(is.na(input$Dates_set[1]) || is.na(input$Dates_set[2])){
+        Import2<-getSymbols(input$Upload_2, src="yahoo", auto.assign = FALSE)
+      }
+      else{
+        Import2<-getSymbols(input$Upload_2, from=input$Dates_set[1], to=input$Dates_set[2]+1,  src="yahoo", auto.assign = FALSE)
+      }
+      
+      value$data<-data.frame(Date=index(Import2), coredata(Import2)) },
+      
+    error = function(c) {runjs('alert("Error: symbol does not exist.");')},
+    finally={gc()}
+    )
+  }
+  else { 
+    erase()
+  }
+})
+```
+
+```{r}
+observeEvent(input$reset,{erase()})
+```
+
+```{r}
+erase<-function() {
+    reset("Upload_1")
+    reset("Upload_2")
+    value$addr_old <- value$addr_new
+    runjs('alert("Controls reset!");')
+}
+```
+
+
+
+```{r} 
+#Data storage
+value <- reactiveValues(
+  data = NULL,
+  addr_old=NULL,
+  addr_new=NULL,
+  DateColInd=NULL,
+  Date_min=NULL,
+  Date_max=NULL,
+  choise=NULL,
+  series=NULL
+)
+```
+
+```{r}
+#block of code, that activates once. Needed for fileInput control reset
+observeEvent(handlerExpr=NULL,{
+  value$addr_new<-obj_addr(input$Upload_1)
+  value$addr_old<-obj_addr(input$Upload_1)}, once = TRUE)
+```
+
+```{r}
+#Here we check, whether fileInput has been updated.
+fileCheck<-eventReactive(c(input$Upload_1, value$addr_old),{
+  
+  value$addr_new <- obj_addr(input$Upload_1)
+  
+  if(value$addr_new == value$addr_old) {FALSE}
+  else {
+    value$addr_old == value$addr_new
+    TRUE
+  }
+})
+```
+
+
+
+
+
+
+
+
+```{r}
+#Initialization block
+observeEvent(value$data,{
+  req(is.data.frame(value$data)==TRUE)
+  
+  value$data<-na.omit(value$data) #modify a bit
+  
+  is.date <- function(x) inherits(x, 'Date')
+  index <- sapply(value$data, is.date) %>% which
+  
+  if(length(index) == 1) {
+    value$Date_min <- value$data[1,index]
+    value$Date_max <- value$data[nrow(value$data),index]
+    value$DateColInd<-index
+  }
+  else {
+    
+    is.convertible.to.date <- function(x) !anyNA(as.Date(as.character(x), tz = 'UTC', format = '%Y-%m-%d'))
+    index <- sapply(value$data, is.convertible.to.date) %>% which
+    
+    if(length(index) != 1) {
+      
+      ### make an alert
+    }
+    else {
+      value$Date_min <- value$data[1,index]
+      value$Date_max <- value$data[nrow(value$data),index]
+      value$DateColInd<-index
+    }
+  }
+  
+
+  updateDateRangeInput(session, "Dates_plot",
+    start= value$Date_min,
+    end= value$Date_max
+   )
+
+  
+  value$choise <- as.list(colnames(value$data)[unlist(lapply(value$data, is.numeric), use.names = FALSE)])
+                          
+  updateSelectizeInput(session, "select", choices = value$choise, selected = NULL, options = list(), server = FALSE)
+  
+  updateSelectizeInput(session, "finalSelect", choices = value$choise, selected = NULL, options = list(), server = FALSE)
+
+})
+
+```
+
+
+```{r}
+observe({
+  req(is.null(value$data)==FALSE) #TryCatch - не работает, необходио дописать! 
+  
+    if (input$Finaldates[1]<input$Finaldates[2]){
+      colIndex <- colnames(value$data) %>% grepl(input$finalSelect,.) %>% which
+      value$series <- value$data[(value$data[,value$DateColInd]>=input$Finaldates[1] & value$data[,value$DateColInd]<=input$Finaldates[2]), colIndex] 
+    } else {
+      colIndex <- colnames(value$data) %>% grepl(input$finalSelect,.) %>% which
+      value$series <- value$data[ , colIndex]    
+    }
+})  
+```
+
+
+
+
+
+
+## Column_2
+
+### Time series plot
+```{r}
+fillCol(flex=c(8.5,1.5),
+  plotlyOutput("MainPlot", height="100%"),
+  
+  fillRow(
+    dateRangeInput("Dates_plot", label = "Date range"),
+    selectizeInput("select", label = "Select box", 
+    choices = NULL,
+    selected = 1, options=list(dropdownParent="body"))
+  )
+)
+```
+
+
+```{r}
+output$MainPlot <-renderPlotly({
+  
+  req(is.data.frame(value$data), isTruthy(value$choise))
+  p<-ggplot(value$data)+aes_string(x=value$data[,value$DateColInd], y= input$select) + coord_cartesian(xlim = c(input$Dates_plot[1],input$Dates_plot[2])) + geom_line()
+  plotly::ggplotly(p)
+  
+}) 
+```
+
+
+
+### Data transformation panel  
+
+```{r}
+fillRow(
+  selectizeInput("finalSelect", label = h3("Series to analyze"), 
+      choices = NULL,
+      selected = 1, options=list(dropdownParent="body")),
+  
+  dateRangeInput("Finaldates", label = h3("Range")), height = "100px"
+)
+
+checkboxGroupInput("checkGroup", label = h3("Checkbox group"), 
+    choices = list("Outlier" = 1, "Round" = 2, "Log" = 3),
+    selected = 1)
+
+```
+
+
+```{r}
+observe({
+   updateDateRangeInput(session, "Finaldates",
+    start= value$Date_min,
+    end= value$Date_max
+ )
+})
+
+```
+
+
+
+### Datatable
+```{r}
+output$DataTable<- renderDataTable(
+
+  datatable(value$data, filter="top") #%>% 
+    #formatRound(colnames(value$data)[unlist(lapply(value$data, is.numeric), use.names = FALSE)], 2)
+)
+```
+
+```{r}
+dataTableOutput('DataTable')
+```
+
+
+
+```{r}
+output$a111<- renderPrint({mData$Tseries})
+verbatimTextOutput("a111")
+```
+
+
+
+# ARIMA/ARCH/GARCH
+
+```{r}
+mData <- reactiveValues(
+  Tseries=NULL,
+  arima=NULL,
+  p=NULL,
+  q=NULL,
+  d=NULL,
+  adf=NULL,
+  diffSeries=NULL,
+  LMtestTable=NULL,
+  ArchModels=NULL,
+  crARCH=NULL,
+  GarchModels=NULL,
+  crGARCH=NULL,
+  TGarchModels=NULL,
+  crTGARCH=NULL,
+  MGarchModels=NULL,
+  crMGARCH=NULL
+)
+```
+
+```{r}
+actionButton("button1", "Analyze")
+```
+
+### Foreword
+
+In financial time series, it is often that the series is transformed by logging and then the differencing is performed.People often look at the returns of the stock rather than the its prices. Differences of log prices represent the returns and are similar to percentage changes of stock prices.
+
+
+### Estimated Arima model
+
+```{r}
+observeEvent(input$button1,{
+  req(is.null(value$series)==FALSE)
+  mData$Tseries <- ts(value$series)
+  
+  if(any(input$checkGroup %>% grepl('^1$',.))) mData$Tseries <- tsclean(mData$Tseries)
+  if(any(input$checkGroup %>% grepl('^2$',.))) mData$Tseries <- round(mData$Tseries,2)
+  if(any(input$checkGroup %>% grepl('^3$',.))) mData$Tseries <- log(mData$Tseries)
+  
+  mData$arima<-auto.arima(mData$Tseries, ic="aic", trace=TRUE)
+})
+```
+
+
+```{r}
+output$EstimatedArima<- renderPrint({mData$arima})
+verbatimTextOutput("EstimatedArima")
+```
+
+
+### Stationarity and differencing of time series data set:
+
+Check of stationarity: <br>
+Ho: series is non-stationary (p-value > 0.05) <br>
+H1: series is stationary     (p-value < 0.05) <br> 
+
+
+```{r}
+#calculations block !!!!!
+
+observeEvent(mData$arima,{
+
+#Getting the orders of arima model
+mData$p <- mData$arima$arma[1]
+mData$q <- mData$arima$arma[2]
+mData$d <- mData$arima$arma[length(mData$arima$arma)-1]
+
+if(mData$d ==0){
+  mData$adf<-adf.test(mData$Tseries, alternative = "stationary")
+}
+else {
+
+  i=0
+  for(i in mData$d-1){
+  mData$Tseries<-diff(mData$Tseries, differences = 1)
+  mData$adf<-adf.test(mData$Tseries, alternative = "stationary")
+  }
+}
+mData$diffSeries<-mData$Tseries
+})
+```
+
+
+```{r}
+output$AdfTest<- renderPrint({ mData$adf })
+#output$Tseries<- renderPrint({ mData$Tseries }) #nigde net
+```
+
+
+```{r}
+verbatimTextOutput("AdfTest")
+```
+
+### Series after differencing
+```{r}
+output$diffplot <-renderPlotly({
+  req(is.null(mData$diffSeries)==FALSE)
+  diff<-ggplot()+aes_string(x=1:length(mData$diffSeries), y= mData$diffSeries) + xlab("diff series") + geom_line()
+  plotly::ggplotly(diff)
+}) 
+```
+
+```{r}
+plotlyOutput("diffplot", height="100%")
+```
+
+### Residuals plot: ACF & PACF 
+Observing residual plot and it`s ACF & PACF diagram
+If ACF & PACF of the model residuals show no significant lags, the selected model is appropriate.
+
+### ACF plot
+```{r}
+#plotOutput(outputId = "ACF")
+
+#output$ACF<- renderPlot({
+  #req(is.null(mData$diffSeries)==FALSE)
+  #acf(mData$diffSeries)
+#})
+
+```
+
+
+### PACF plot
+
+```{r}
+#plotOutput(outputId = "PACF")
+
+#output$PACF<- renderPlot({
+ # req(is.null(mData$diffSeries)==FALSE)
+ # pacf(mData$diffSeries)
+#})
+```
+
+
+### Ljung-Box test
+Ljung-Box is a test of autocorrelation in which it verifies whether the autocorrelations of a time series are different from 0.<br>
+
+More formally, the Ljung-Box test can be defined as follows:<br>
+H0:	The data are random. - independent and uncorrelated;<br>
+H1:	The data are not random. - remains serial correlation;<br>
+
+Note: If the p-value is greater than 0.05 then the residuals are independent which we want for the model to be correct.<br>
+
+```{r}
+output$LBtest <- renderPrint({ 
+  req(is.null(mData$arima)==FALSE)
+  Box.test(residuals(mData$arima),lag=12, type="Ljung-Box") 
+})
+verbatimTextOutput("LBtest")
+```
+
+### Diagnostic checking
+1.1) Observing residual plot and it`s ACF & PACF diagram <br>
+If ACF & PACF of the model residuals show no significant lags, the selected model is appropriate.<br>
+```{r}
+plotOutput(outputId = "ModelResiduals")
+
+output$ModelResiduals<- renderPlot({
+  req(is.null(mData$arima)==FALSE)
+  tsdisplay(residuals(mData$arima), lag.max=15, main='Model Residuals')
+})
+```
+
+### ARIMA forecast
+
+```{r}
+observeEvent(mData$arima,{
+
+  ArimaPred<-as.data.frame(forecast(mData$arima, h=4))
+
+  if (any(input$checkGroup %>% grepl('^3$',.))){
+    mData$ArimaPred<-exp(ArimaPred)
+  } else {
+    mData$ArimaPred<-ArimaPred
+  }
+})
+
+```
+
+
+```{r}
+output$ArimaPrediction <- renderDataTable(
+
+  datatable(mData$ArimaPred, filter="top")
+)
+```
+
+```{r}
+dataTableOutput('ArimaPrediction')
+```
+
+
+### Remark
+Although ACF and PACF of residuals have no significant lags, the time series plot of residuals shows some cluster of volatility.<br>
+
+It is important to note that ARIMA is a method to @linear model the data and the forecast width remains constant because the model does not reflect recent changes or incorporate new information.<br>
+
+In other words, it provides best linear forecasts for the series, and thus plays little role in forecasting model nonlinearly.<br>
+
+In order to model volatility, ARCH/GARCH method is used.<br>
+
+
+### Testing for ARCH effect
+1) Firstly, check if residual plot displays any cluster of volatility. <br>
+2) Observe the squared residual plot; Are there any volatility clusters? <br>
+3) Observe ACF & PACF of squared residuals. <br>
+
+```{r}
+plotOutput(outputId = "ArchEffect")
+
+output$ArchEffect<- renderPlot({
+  req(is.null(mData$arima)==FALSE)
+  tsdisplay(residuals(mData$arima)^2, lag.max=15, main='Model Residuals')
+})
+```
+
+### Remark
+A strict white noise cannot be predicted either linearly or nonlinearly while general white noise might not be predicted linearly yet done so nonlinearly. If the residuals are strict white noise, they are independent with zero mean, normally distributed, and ACF & PACF of squared residuals displays no significant lags.
+
+
+### LM test
+As an alternative to Engle`s ARCH test, you can check for serial dependence (ARCH effects) in a residual series by conducting a Ljung-Box Q-test on the first m lags of the squared residual series, where m = P + Q, ARCH(P*Q), GARCH(P,Q).
+```{r}
+observe({
+  req(is.null(mData$arima)==FALSE)
+  
+  LMtestTable <- data.frame(matrix(ncol = 5, nrow = 1))
+  for(i in 1:5){
+    u <-Box.test(residuals(mData$arima)^2,lag=i, type="Ljung-Box")
+    LMtestTable[1,i]<-u$p.value
+  }
+  
+  colnames(LMtestTable) <- c("lag 1","lag 2","lag 3","lag 4", "lag 5")
+  
+  mData$LMtestTable <- LMtestTable
+})
+```
+
+```{r}
+output$TestResultTable <- renderDataTable(
+  datatable(mData$LMtestTable)
+)
+```
+
+```{r}
+dataTableOutput('TestResultTable')
+```
+
+
+
+### ARCH notes
+The general rules for ARCH varience cofficients are following:
+ht = a0 + a1 e^2 + a2 e^2 .., a0>0, 0< (sum of ai) <=1
+
+### ARCH model selection
+
+
+```{r}
+observe({
+req(is.null(mData$LMtestTable)==FALSE)
+  
+list1<-list()
+list2<-list()
+  for(i in 1:4){
+    t<-garchFit(substitute(~arma(p,q)+garch(i,0),list(p=mData$p, q=mData$q, i=i)), data=mData$Tseries)
+    t1<-attributes(t)$fit$ics
+    list1[[i]]<-t
+    list2[[i]]<-t1
+  }
+
+  mData$ArchModels<-list1
+  #mData$crARCH<-list2
+  ctr<-as.data.frame(list2)
+  ctr<-as.data.frame(t(ctr))
+  rownames(ctr)<-c("ARIMA-Arch(1)", "ARIMA-Arch(2)", "ARIMA-Arch(3)", "ARIMA-Arch(4)")
+  mData$crARCH<-ctr
+})
+```
+
+
+```{r}
+output$ArchModelslist<- renderPrint({ mData$ArchModels
+})
+verbatimTextOutput("ArchModelslist")
+```
+
+
+### ARCH models estimated criteria
+```{r}
+output$ARCH_CR <- renderDataTable(
+  datatable(mData$crARCH)
+)
+```
+
+```{r}
+dataTableOutput('ARCH_CR')
+```
+
+
+
+### GARCH model selection
+
+```{r}
+observe({
+req(is.null(mData$LMtestTable)==FALSE)
+
+list3<-list()
+list4<-list()
+z=1
+
+for(i in 1:2){
+  for(j in 1:2){
+    garchSpec <- ugarchspec(
+               variance.model=list(model="sGARCH",
+                                   garchOrder=c(i,j)),
+               mean.model=list(armaOrder=c(mData$p,mData$q)), 
+               distribution.model="std")
+    garchFit <- ugarchfit(spec=garchSpec, data=mData$Tseries)
+    
+    t3<-garchFit
+    t4<-infocriteria(garchFit)
+    
+    list3[[z]]<-t3
+    list4[[z]]<-t4
+    
+    z=z+1
+    }
+}
+
+mData$GarchModels<-list3
+
+ctrr<-as.data.frame(list4)
+colnames(ctrr)<-c("ARIMA-Garch(1,1)", "ARIMA-Garch(1,2)", "ARIMA-Garch(2,1)", "ARIMA-Garch(2,2)")
+mData$crGARCH<-ctrr
+  
+})
+```
+
+
+```{r}
+output$GarchModelslist<- renderPrint({ mData$GarchModels
+})
+verbatimTextOutput("GarchModelslist")
+```
+
+### GARCH models estimated criteria
+
+```{r}
+output$GARCH_CR <- renderDataTable(
+  datatable(mData$crGARCH)
+)
+```
+
+```{r}
+dataTableOutput('GARCH_CR')
+```
+
+
+
+
+
+### TGARCH model selection
+
+```{r}
+observe({
+req(is.null(mData$LMtestTable)==FALSE)
+
+list3<-list()
+list4<-list()
+z=1
+
+for(i in 1:2){
+  for(j in 1:2){
+    garchSpec <- ugarchspec(
+               variance.model=list(model="fGARCH",
+                                   garchOrder=c(i,j),
+                                   submodel="TGARCH"),
+               mean.model=list(armaOrder=c(mData$p,mData$q)), 
+               distribution.model="std")
+    garchFit <- ugarchfit(spec=garchSpec, data=mData$Tseries)
+    
+    t3<-garchFit
+    t4<-infocriteria(garchFit)
+    
+    list3[[z]]<-t3
+    list4[[z]]<-t4
+    
+    z=z+1
+    }
+}
+
+mData$TGarchModels<-list3
+
+ctrr<-as.data.frame(list4)
+colnames(ctrr)<-c("ARIMA-TGarch(1,1)", "ARIMA-TGarch(1,2)", "ARIMA-TGarch(2,1)", "ARIMA-TGarch(2,2)")
+mData$crTGARCH<-ctrr
+  
+})
+```
+
+
+```{r}
+output$TGarchModelslist<- renderPrint({ mData$TGarchModels
+})
+verbatimTextOutput("TGarchModelslist")
+```
+
+
+### TGARCH models estimated criteria
+
+```{r}
+output$TGARCH_CR <- renderDataTable(
+  datatable(mData$crTGARCH)
+)
+```
+
+```{r}
+dataTableOutput('TGARCH_CR')
+```
+
+
+### GARCH-in-Mean model selection
+
+```{r}
+observe({
+req(is.null(mData$LMtestTable)==FALSE)
+
+list3<-list()
+list4<-list()
+z=1
+
+for(i in 1:2){
+  for(j in 1:2){
+    garchSpec <- ugarchspec(
+               variance.model=list(model="fGARCH",
+                                   garchOrder=c(i,j),
+                                   submodel="APARCH"),
+               mean.model=list(armaOrder=c(mData$p,mData$q),
+                               include.mean=TRUE,
+                               archm=TRUE,
+                               archpow=2), 
+               distribution.model="std")
+    garchFit <- ugarchfit(spec=garchSpec, data=mData$Tseries)
+    
+    t3<-garchFit
+    t4<-infocriteria(garchFit)
+    
+    list3[[z]]<-t3
+    list4[[z]]<-t4
+    
+    z=z+1
+    }
+}
+
+mData$MGarchModels<-list3
+
+ctrr<-as.data.frame(list4)
+colnames(ctrr)<-c("ARIMA-MGarch(1,1)", "ARIMA-MGarch(1,2)", "ARIMA-MGarch(2,1)", "ARIMA-MGarch(2,2)")
+mData$crMGARCH<-ctrr
+  
+})
+```
+
+```{r}
+output$MGarchModelslist<- renderPrint({ mData$MGarchModels
+})
+verbatimTextOutput("MGarchModelslist")
+```
+
+
+
+### GARCH-In-Mean models estimated criteria
+
+```{r}
+output$MGARCH_CR <- renderDataTable(
+  datatable(mData$crMGARCH)
+)
+```
+
+```{r}
+dataTableOutput('MGARCH_CR')
+```
+
+
+
+
+
+
+
+# ARNN
+
+```{r}
+netData <- reactiveValues(
+  Seriess=NULL,
+  modelfit=NULL,
+  NNF=NULL,
+  fcast=NULL
+)
+```
+
+```{r}
+actionButton("button2", "Analyze")
+```
+
+
+```{r}
+observeEvent(input$button2,{
+  req(is.null(value$series)==FALSE)
+  netData$Seriess <- ts(value$series)
+  
+  if(any(input$checkGroup %>% grepl('^1$',.))) netData$Seriess <- tsclean(netData$Seriess)
+  if(any(input$checkGroup %>% grepl('^2$',.))) netData$Seriess <- round(netData$Seriess,2)
+  if(any(input$checkGroup %>% grepl('^3$',.))) netData$Seriess <- log(netData$Seriess)
+  
+  netData$modelfit <- nnetar(netData$Seriess, repeats = 20, lambda=0.5)
+})
+```
+
+### Foreword
+
+Feed-forward neural networks with a single hidden layer and lagged inputs for forecasting univariate time series.The nnetar function in the forecast package for R fits a neural network model to a time series with lagged values of the time series as inputs (and possibly some other exogenous inputs). So it is a nonlinear autogressive model, and it is not possible to analytically derive prediction intervals. Therefore we use simulation.The neural networks is fit by the function: <br>
+
+nnetar(y, p, P = 1, size, repeats = 20, xreg = NULL, lambda = NULL, model = NULL, subset = NULL, scale.inputs = TRUE, x = y, …)
+
+```{r}
+output$ResultNet<- renderPrint({ netData$modelfit
+})
+verbatimTextOutput("ResultNet")
+```
+
+
+### ARNN Forecast
+```{r}
+observeEvent(netData$modelfit,{
+  req((is.null(netData$modelfit)==FALSE))
+  
+  if (any(input$checkGroup %>% grepl('^3$',.))){
+    netData$NNF <- forecast(netData$modelfit, PI=TRUE, h=4)
+    netData$fcast <- exp(as.data.frame(netData$NNF))
+  } else {
+    netData$NNF <- forecast(netData$modelfit, PI=TRUE, h=4)
+    netData$fcast <- as.data.frame(netData$NNF)
+  }
+  
+})
+
+```
+
+
+
+```{r}
+output$ARNNForecast <- renderDataTable(
+  datatable(netData$fcast)
+)
+```
+
+```{r}
+dataTableOutput('ARNNForecast')
+```
+
+
+### Forecast plot
+```{r}
+plotOutput(outputId = "netPlot")
+```
+
+```{r}
+output$netPlot <- renderPlot({
+  req(is.null(netData$NNF)==FALSE)
+  forecast::autoplot(netData$NNF)
+})
+```
+
